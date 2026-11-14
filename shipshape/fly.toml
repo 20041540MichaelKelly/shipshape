@@ -1,0 +1,32 @@
+# Fly.io config for the licence server. Change `app` to a name you own.
+#   fly launch --no-deploy --copy-config
+#   fly volumes create shipshape_data --size 1 --region lhr
+#   fly secrets set STRIPE_WEBHOOK_SECRET=whsec_... SHIPSHAPE_PRIVATE_KEY=...
+#   fly deploy
+app = "shipshape-api"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "server.Dockerfile"
+
+[env]
+  DATA_FILE = "/data/accounts.json"
+  PORT = "8080"
+  CLIENT_IP_HEADER = "Fly-Client-IP"
+
+[mounts]
+  source = "shipshape_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "30s"
+    timeout = "5s"

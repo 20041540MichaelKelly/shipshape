@@ -1,0 +1,82 @@
+# Example: a web shop last touched on Kubernetes 1.24
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  namespace: shop
+spec:
+  replicas: 3
+  selector:
+    matchLabels: {app: storefront}
+  template:
+    metadata:
+      labels: {app: storefront}
+    spec:
+      containers:
+        - name: web
+          image: registry.example.com/storefront:4.2.1
+---
+apiVersion: autoscaling/v2beta2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: storefront
+  namespace: shop
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: storefront
+  minReplicas: 3
+  maxReplicas: 12
+---
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: nightly-invoices
+  namespace: shop
+spec:
+  schedule: "15 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: invoices
+              image: registry.example.com/invoices:1.9.0
+---
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: storefront
+  namespace: shop
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels: {app: storefront}
+---
+apiVersion: flowcontrol.apiserver.k8s.io/v1beta2
+kind: FlowSchema
+metadata:
+  name: shop-controllers
+spec:
+  priorityLevelConfiguration:
+    name: workload-high
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: storefront
+  namespace: shop
+spec:
+  rules:
+    - host: shop.example.com
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: legacy-payments
+  namespace: shop
+subsets:
+  - addresses: [{ip: 10.20.0.14}]
+    ports: [{port: 8443}]

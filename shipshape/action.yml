@@ -1,0 +1,45 @@
+name: Shipshape Kubernetes upgrade check
+description: Fail a pull request when manifests use Kubernetes API versions the target release no longer serves.
+branding:
+  icon: check-circle
+  color: blue
+inputs:
+  current:
+    description: Kubernetes version the cluster runs now, for example 1.24
+    required: true
+  target:
+    description: Kubernetes version you are upgrading to, for example 1.33
+    required: true
+  paths:
+    description: Files or directories to scan, one per line
+    required: false
+    default: "."
+  fail-on:
+    description: "Fail the job on: blocker, deprecated or none"
+    required: false
+    default: blocker
+  pr-comment:
+    description: Post the report as one pull request comment, kept up to date (Team plan)
+    required: false
+    default: "false"
+  team-token:
+    description: Shipshape Team token, from a repository secret
+    required: false
+    default: ""
+  github-token:
+    description: Token used to post the pull request comment
+    required: false
+    default: ${{ github.token }}
+runs:
+  using: docker
+  image: Dockerfile
+  env:
+    SHIPSHAPE_TOKEN: ${{ inputs.team-token }}
+    GITHUB_TOKEN: ${{ inputs.github-token }}
+  args:
+    - --format=github
+    - --current=${{ inputs.current }}
+    - --target=${{ inputs.target }}
+    - --fail-on=${{ inputs.fail-on }}
+    - --pr-comment=${{ inputs.pr-comment }}
+    - ${{ inputs.paths }}

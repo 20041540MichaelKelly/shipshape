@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shipshape Kubernetes Upgrade Checker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: one working column. Controls and input on top, verdict + upgrade path, then findings. */
+:root{
+  --bg:#f3f5f9; --surface:#ffffff; --sunken:#e9edf4; --line:#d3dae6;
+  --ink:#131b2c; --muted:#56627a;
+  --accent:#2447d6; --accent-ink:#ffffff; --accent-soft:#e4e9fc;
+  --bad:#c0261f; --bad-soft:#fbe6e4;
+  --warn:#9a5b00; --warn-soft:#fbeed3;
+  --good:#17703f; --good-soft:#def3e6;
+  --note:#4a5bb0; --note-soft:#e8ebfa;
+  --display:"Bricolage Grotesque","IBM Plex Sans",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --r:10px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1420; --surface:#161e2e; --sunken:#0a0f19; --line:#2a3550;
+    --ink:#e8ecf5; --muted:#9aa6bf;
+    --accent:#7d97ff; --accent-ink:#0b1020; --accent-soft:#1e2a52;
+    --bad:#ff8078; --bad-soft:#3b1a1a;
+    --warn:#f0b455; --warn-soft:#3a2b10;
+    --good:#62d394; --good-soft:#12301f;
+    --note:#a3b0ff; --note-soft:#1f2748;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1420; --surface:#161e2e; --sunken:#0a0f19; --line:#2a3550;
+  --ink:#e8ecf5; --muted:#9aa6bf;
+  --accent:#7d97ff; --accent-ink:#0b1020; --accent-soft:#1e2a52;
+  --bad:#ff8078; --bad-soft:#3b1a1a;
+  --warn:#f0b455; --warn-soft:#3a2b10;
+  --good:#62d394; --good-soft:#12301f;
+  --note:#a3b0ff; --note-soft:#1f2748;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 var(--body)}
+.wrap{max-width:920px;margin:0 auto;padding:20px 16px 56px;display:flex;flex-direction:column;gap:20px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(1.6rem,5vw,2.2rem);letter-spacing:-.01em}
+h2{font-size:1.25rem}
+h3{font-size:1rem}
+p{margin:0}
+code,.mono{font-family:var(--mono);font-size:.86em}
+.muted{color:var(--muted)}
+.small{font-size:.85rem}
+
+header.top{display:flex;flex-direction:column;gap:8px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:700;font-size:1.05rem}
+.brand svg{flex:none}
+.lede{max-width:62ch;color:var(--muted)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:14px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+.field{display:flex;flex-direction:column;gap:4px;flex:1 1 130px;min-width:0}
+label,.label{font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+select,textarea,button{font:inherit;color:inherit}
+select{appearance:none;background:var(--sunken);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-weight:500;width:100%}
+textarea{width:100%;min-height:190px;resize:vertical;background:var(--sunken);border:1px solid var(--line);border-radius:8px;padding:12px;font:13px/1.5 var(--mono);tab-size:2;white-space:pre;overflow:auto}
+select:focus-visible,textarea:focus-visible,button:focus-visible,.filebtn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:9px 14px;font-weight:600;font-size:.9rem;cursor:pointer;min-height:42px}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.filebtn{position:relative;display:inline-flex;align-items:center}
+.filebtn input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--sunken);border:1px solid var(--line);border-radius:999px;padding:3px 4px 3px 10px;font:500 .78rem var(--mono)}
+.chip button{border:0;background:none;cursor:pointer;color:var(--muted);padding:2px 6px;border-radius:999px;font-size:.95rem;line-height:1}
+.chip button:hover{color:var(--bad)}
+.tag-example{align-self:flex-start;background:var(--accent-soft);color:var(--accent);font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:999px}
+.drop.over textarea{border-color:var(--accent);border-style:dashed}
+
+.verdict{border-radius:var(--r);padding:16px;border:1px solid;display:flex;flex-direction:column;gap:6px}
+.verdict.bad{background:var(--bad-soft);border-color:var(--bad)}
+.verdict.warn{background:var(--warn-soft);border-color:var(--warn)}
+.verdict.good{background:var(--good-soft);border-color:var(--good)}
+.verdict.idle{background:var(--sunken);border-color:var(--line)}
+.verdict h2{font-size:1.3rem}
+.verdict.bad h2{color:var(--bad)} .verdict.warn h2{color:var(--warn)} .verdict.good h2{color:var(--good)}
+
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;display:flex;flex-direction:column;gap:2px;border-top-width:3px}
+.tile b{font:700 1.5rem/1.1 var(--display);font-variant-numeric:tabular-nums}
+.tile span{font-size:.75rem;color:var(--muted)}
+.tile.bad{border-top-color:var(--bad)} .tile.warn{border-top-color:var(--warn)} .tile.good{border-top-color:var(--good)} .tile.all{border-top-color:var(--accent)}
+@media (max-width:480px){.tiles{grid-template-columns:repeat(2,1fr)}}
+
+.path-scroll{overflow-x:auto;padding-bottom:4px}
+.path{display:flex;gap:4px;min-width:max-content}
+.hop{flex:1 0 54px;border:1px solid var(--line);border-radius:8px;padding:6px 4px;text-align:center;background:var(--sunken);display:flex;flex-direction:column;gap:2px}
+.hop .v{font:600 .8rem var(--mono)}
+.hop .n{font-size:.7rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.hop.cur{background:var(--surface);border-color:var(--ink)}
+.hop.hit{background:var(--bad-soft);border-color:var(--bad)} .hop.hit .n{color:var(--bad);font-weight:600}
+.hop.tgt{box-shadow:inset 0 -3px 0 var(--accent)}
+
+.findings{display:flex;flex-direction:column;gap:10px}
+.finding{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.finding.broken,.finding.blocker{border-left-color:var(--bad)}
+.finding.warning{border-left-color:var(--warn)}
+.finding.notice{border-left-color:var(--note)}
+.fhead{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.fhead .name{font-weight:600;overflow-wrap:anywhere}
+.pill{font-size:.72rem;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.pill.broken,.pill.blocker{background:var(--bad-soft);color:var(--bad)}
+.pill.warning{background:var(--warn-soft);color:var(--warn)}
+.pill.notice{background:var(--note-soft);color:var(--note)}
+.pill.auto{background:var(--good-soft);color:var(--good)}
+.pill.manual{background:var(--sunken);color:var(--muted);border:1px solid var(--line)}
+.swap{font-family:var(--mono);font-size:.84rem;overflow-wrap:anywhere}
+.swap del{color:var(--bad);text-decoration-thickness:1px}
+.swap ins{color:var(--good);text-decoration:none;font-weight:600}
+.where{font:400 .76rem var(--mono);color:var(--muted);overflow-wrap:anywhere}
+.finding p{font-size:.9rem}
+.empty{padding:14px;border:1px dashed var(--line);border-radius:var(--r);color:var(--muted);font-size:.9rem}
+.toast{font-size:.85rem;color:var(--good);min-height:1.3em}
+.out{display:none}
+.out.show{display:block}
+
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.plan{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:8px}
+.plan.live{border-color:var(--accent)}
+.plan .price{font:700 1.5rem var(--display);font-variant-numeric:tabular-nums}
+.plan .price small{font:400 .8rem var(--body);color:var(--muted)}
+.plan ul{margin:0;padding-left:18px;font-size:.88rem;display:flex;flex-direction:column;gap:3px}
+.status{align-self:flex-start;font-size:.72rem;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--sunken);color:var(--muted);border:1px solid var(--line)}
+.plan a.btn{text-decoration:none;text-align:center;display:block;margin-top:auto}
+.plan a.btn[hidden]{display:none}
+.plan.live .status{background:var(--good-soft);color:var(--good);border-color:transparent}
+footer{font-size:.8rem;color:var(--muted);display:flex;flex-direction:column;gap:6px;max-width:70ch}
+a{color:var(--accent)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--accent)"/><path d="M6.5 14.5l4 4 9-10" fill="none" stroke="var(--accent-ink)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Shipshape
+  </div>
+  <h1>Will your manifests survive the next Kubernetes upgrade?</h1>
+  <p class="lede">Paste manifests or rendered Helm output. Shipshape finds every API version that stops being served between your current and target release, and tells you what to change. Everything runs in this browser tab. Your YAML is never uploaded.</p>
+</header>
+
+<section class="panel" aria-label="Scan settings and input">
+  <div class="row">
+    <div class="field"><label for="cur">Cluster runs</label><select id="cur"></select></div>
+    <div class="field"><label for="tgt">Upgrading to</label><select id="tgt"></select></div>
+  </div>
+  <div class="field drop" id="drop">
+    <label for="src">Manifests (YAML or JSON)</label>
+    <span class="tag-example" id="exTag">Example manifests loaded. Replace with your own.</span>
+    <textarea id="src" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="actions">
+    <span class="btn filebtn">Add files<input type="file" id="files" multiple accept=".yaml,.yml,.json,.txt,text/*,application/json" aria-label="Add manifest files"></span>
+    <button class="btn" id="btnExample" type="button">Load example</button>
+    <button class="btn" id="btnClear" type="button">Clear</button>
+  </div>
+</section>
+
+<section id="verdict" class="verdict idle" aria-live="polite"></section>
+
+<section class="tiles" aria-label="Summary">
+  <div class="tile all"><b id="tAll">0</b><span>resources scanned</span></div>
+  <div class="tile bad"><b id="tBad">0</b><span>break on upgrade</span></div>
+  <div class="tile warn"><b id="tWarn">0</b><span>deprecated</span></div>
+  <div class="tile good"><b id="tGood">0</b><span>ready</span></div>
+</section>
+
+<section class="panel" aria-label="Upgrade path">
+  <h2>Upgrade path</h2>
+  <p class="small muted">Each step shows how many of your resources stop being served at that release.</p>
+  <div class="path-scroll"><div class="path" id="path"></div></div>
+</section>
+
+<section class="panel" aria-label="Findings">
+  <div class="row" style="align-items:center;justify-content:space-between">
+    <h2>What to change</h2>
+    <div class="actions">
+      <button class="btn primary" id="btnReport" type="button">Copy report</button>
+      <button class="btn" id="btnFix" type="button">Show fixed manifests</button>
+    </div>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <div class="findings" id="findings"></div>
+  <div class="out" id="fixWrap">
+    <label for="fixOut">Manifests with safe apiVersion swaps applied</label>
+    <p class="small muted" id="fixNote" style="margin:4px 0 8px"></p>
+    <textarea id="fixOut" readonly spellcheck="false"></textarea>
+    <div class="actions" style="margin-top:8px"><button class="btn" id="btnCopyFix" type="button">Copy fixed manifests</button></div>
+  </div>
+</section>
+
+<section class="panel" aria-label="Plans">
+  <h2>Plans</h2>
+  <div class="plans">
+    <div class="plan live">
+      <span class="status">Available now</span>
+      <h3>Checker</h3>
+      <div class="price">€0</div>
+      <ul><li>Unlimited scans in the browser</li><li>CLI and GitHub Action that fail a pull request on blockers</li><li>Markdown report and safe auto-fixes</li></ul>
+    </div>
+    <div class="plan" id="planTeam">
+      <span class="status" id="teamStatus">Planned</span>
+      <h3>Team</h3>
+      <div class="price">€49 <small>per month</small></div>
+      <ul><li>One pull request comment, kept up to date on every push</li><li>SARIF export for GitHub code scanning</li><li>Email support</li></ul>
+      <a class="btn primary" id="teamBuy" href="#" hidden>Subscribe</a>
+    </div>
+    <div class="plan">
+      <span class="status">Planned</span>
+      <h3>Fleet</h3>
+      <div class="price">€499 <small>per month</small></div>
+      <ul><li>Live cluster scan, including Helm releases</li><li>Operator and CRD rules: cert-manager, Istio, Argo</li><li>Alerts when a new release affects you</li></ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Rules follow the official Kubernetes Deprecated API Migration Guide and cover removals from v1.16 through v1.32, the most recent release that removed a core API, plus the v1 Endpoints and ComponentStatus deprecations. Custom resources from operators are not checked yet.</p>
+  <p hidden>Run the same check on every pull request with the <a id="repoLink" href="#">CLI and GitHub Action</a>.</p>
+  <p>Shipshape reads the <code>apiVersion</code> and <code>kind</code> of each resource. Render Helm charts with <code>helm template</code> first so templated values are resolved.</p>
+</footer>
+</div>
+
+<script id="engine">
+/* ---------- Engine: pure functions, no DOM ---------- */
+var MIN_VER = 15, MAX_VER = 37;
+function R(av, kinds, removed, repl, since, notes, manual) {
+  return { av: av, kinds: kinds, removed: removed, repl: repl, since: since, notes: notes || "", manual: !!manual };
+}
+var RULES = [
+  // v1.16
+  R("extensions/v1beta1", ["NetworkPolicy"], 16, "networking.k8s.io/v1", 8, ""),
+  R("extensions/v1beta1", ["DaemonSet"], 16, "apps/v1", 9, "spec.templateGeneration is removed. spec.selector is now required and immutable. updateStrategy defaults to RollingUpdate.", true),
+  R("apps/v1beta2", ["DaemonSet"], 16, "apps/v1", 9, "spec.templateGeneration is removed. spec.selector is now required and immutable. updateStrategy defaults to RollingUpdate.", true),
+  R("extensions/v1beta1", ["Deployment"], 16, "apps/v1", 9, "spec.rollbackTo is removed. spec.selector is now required and immutable. Defaults change: progressDeadlineSeconds 600, revisionHistoryLimit 10, maxSurge and maxUnavailable 25%.", true),
+  R("apps/v1beta1", ["Deployment"], 16, "apps/v1", 9, "spec.rollbackTo is removed. spec.selector is now required and immutable. Defaults change: progressDeadlineSeconds 600, revisionHistoryLimit 10, maxSurge and maxUnavailable 25%.", true),
+  R("apps/v1beta2", ["Deployment"], 16, "apps/v1", 9, "spec.selector is now required and immutable. Check the changed defaults for progressDeadlineSeconds and revisionHistoryLimit.", true),
+  R("apps/v1beta1", ["StatefulSet"], 16, "apps/v1", 9, "spec.selector is now required and immutable. updateStrategy defaults to RollingUpdate.", true),
+  R("apps/v1beta2", ["StatefulSet"], 16, "apps/v1", 9, "spec.selector is now required and immutable. updateStrategy defaults to RollingUpdate.", true),
+  R("extensions/v1beta1", ["ReplicaSet"], 16, "apps/v1", 9, "spec.selector is now required and immutable.", true),
+  R("apps/v1beta1", ["ReplicaSet"], 16, "apps/v1", 9, "spec.selector is now required and immutable.", true),
+  R("apps/v1beta2", ["ReplicaSet"], 16, "apps/v1", 9, "spec.selector is now required and immutable.", true),
+  R("extensions/v1beta1", ["PodSecurityPolicy"], 16, "policy/v1beta1", 10, ""),
+  // v1.22
+  R("admissionregistration.k8s.io/v1beta1", ["MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"], 22, "admissionregistration.k8s.io/v1", 16, "sideEffects and admissionReviewVersions become required. failurePolicy defaults to Fail, matchPolicy to Equivalent, timeoutSeconds to 10. Webhook names must be unique.", true),
+  R("apiextensions.k8s.io/v1beta1", ["CustomResourceDefinition"], 22, "apiextensions.k8s.io/v1", 16, "A structural schema is required for every version. version, validation, subresources and additionalPrinterColumns move under spec.versions. JSONPath is renamed jsonPath. preserveUnknownFields: true is not allowed.", true),
+  R("apiregistration.k8s.io/v1beta1", ["APIService"], 22, "apiregistration.k8s.io/v1", 10, ""),
+  R("authentication.k8s.io/v1beta1", ["TokenReview"], 22, "authentication.k8s.io/v1", 6, ""),
+  R("authorization.k8s.io/v1beta1", ["LocalSubjectAccessReview", "SelfSubjectAccessReview", "SubjectAccessReview", "SelfSubjectRulesReview"], 22, "authorization.k8s.io/v1", 6, "spec.group is renamed spec.groups.", true),
+  R("certificates.k8s.io/v1beta1", ["CertificateSigningRequest"], 22, "certificates.k8s.io/v1", 19, "spec.signerName and spec.usages become required. The kubernetes.io/legacy-unknown signer is not allowed.", true),
+  R("coordination.k8s.io/v1beta1", ["Lease"], 22, "coordination.k8s.io/v1", 14, ""),
+  R("extensions/v1beta1", ["Ingress"], 22, "networking.k8s.io/v1", 19, "spec.backend is renamed spec.defaultBackend. serviceName and servicePort move to service.name and service.port. pathType is required on every path.", true),
+  R("networking.k8s.io/v1beta1", ["Ingress"], 22, "networking.k8s.io/v1", 19, "spec.backend is renamed spec.defaultBackend. serviceName and servicePort move to service.name and service.port. pathType is required on every path.", true),
+  R("networking.k8s.io/v1beta1", ["IngressClass"], 22, "networking.k8s.io/v1", 19, ""),
+  R("rbac.authorization.k8s.io/v1beta1", ["ClusterRole", "ClusterRoleBinding", "Role", "RoleBinding"], 22, "rbac.authorization.k8s.io/v1", 8, ""),
+  R("scheduling.k8s.io/v1beta1", ["PriorityClass"], 22, "scheduling.k8s.io/v1", 14, ""),
+  R("storage.k8s.io/v1beta1", ["CSIDriver"], 22, "storage.k8s.io/v1", 19, ""),
+  R("storage.k8s.io/v1beta1", ["CSINode"], 22, "storage.k8s.io/v1", 17, ""),
+  R("storage.k8s.io/v1beta1", ["StorageClass"], 22, "storage.k8s.io/v1", 6, ""),
+  R("storage.k8s.io/v1beta1", ["VolumeAttachment"], 22, "storage.k8s.io/v1", 13, ""),
+  // v1.25
+  R("batch/v1beta1", ["CronJob"], 25, "batch/v1", 21, ""),
+  R("discovery.k8s.io/v1beta1", ["EndpointSlice"], 25, "discovery.k8s.io/v1", 21, "Per-endpoint nodeName and zone fields replace the topology keys.", true),
+  R("events.k8s.io/v1beta1", ["Event"], 25, "events.k8s.io/v1", 19, "type is limited to Normal or Warning. involvedObject is renamed regarding. eventTime, series, reportingController and reportingInstance replace the older timestamp, count and source fields.", true),
+  R("autoscaling/v2beta1", ["HorizontalPodAutoscaler"], 25, "autoscaling/v2", 23, "targetAverageUtilization becomes target.averageUtilization with target.type: Utilization.", true),
+  R("policy/v1beta1", ["PodDisruptionBudget"], 25, "policy/v1", 21, "Behaviour change: an empty spec.selector ({}) now selects every pod in the namespace. In v1beta1 it selected none.", true),
+  R("policy/v1beta1", ["PodSecurityPolicy"], 25, null, null, "PodSecurityPolicy has no replacement API. Move to Pod Security Admission (namespace labels) or a policy engine such as Kyverno or Gatekeeper before upgrading.", true),
+  R("node.k8s.io/v1beta1", ["RuntimeClass"], 25, "node.k8s.io/v1", 20, ""),
+  // v1.26
+  R("flowcontrol.apiserver.k8s.io/v1beta1", ["FlowSchema", "PriorityLevelConfiguration"], 26, "flowcontrol.apiserver.k8s.io/v1beta2", 23, ""),
+  R("autoscaling/v2beta2", ["HorizontalPodAutoscaler"], 26, "autoscaling/v2", 23, "targetAverageUtilization becomes target.averageUtilization with target.type: Utilization.", true),
+  // v1.27
+  R("storage.k8s.io/v1beta1", ["CSIStorageCapacity"], 27, "storage.k8s.io/v1", 24, ""),
+  // v1.29
+  R("flowcontrol.apiserver.k8s.io/v1beta2", ["FlowSchema", "PriorityLevelConfiguration"], 29, "flowcontrol.apiserver.k8s.io/v1beta3", 26, "spec.limited.assuredConcurrencyShares is renamed spec.limited.nominalConcurrencyShares.", true),
+  // v1.32
+  R("flowcontrol.apiserver.k8s.io/v1beta3", ["FlowSchema", "PriorityLevelConfiguration"], 32, "flowcontrol.apiserver.k8s.io/v1", 29, "nominalConcurrencyShares defaults to 30 only when unset. An explicit 0 now stays 0.", true)
+];
+// Deprecated but still served
+var DEPRECATIONS = [
+  { av: "v1", kinds: ["Endpoints"], deprecated: 33, repl: "discovery.k8s.io/v1 EndpointSlice", notes: "The Endpoints API is deprecated from v1.33 and the API server returns a warning. It is still served. Plan a move to EndpointSlice." },
+  { av: "v1", kinds: ["ComponentStatus"], deprecated: 19, repl: null, notes: "ComponentStatus has been deprecated since v1.19 and has no replacement API. Use component health endpoints instead." }
+];
+
+function findRule(av, kind) {
+  for (var i = 0; i < RULES.length; i++) if (RULES[i].av === av && RULES[i].kinds.indexOf(kind) !== -1) return RULES[i];
+  return null;
+}
+function findDeprecation(av, kind) {
+  for (var i = 0; i < DEPRECATIONS.length; i++) if (DEPRECATIONS[i].av === av && DEPRECATIONS[i].kinds.indexOf(kind) !== -1) return DEPRECATIONS[i];
+  return null;
+}
+// Follow replacements until one is still served at the target version.
+function resolveReplacement(rule, kind, tgt) {
+  var chain = [], r = rule, guard = 0;
+  while (r && r.repl && guard++ < 6) {
+    chain.push({ av: r.repl, since: r.since, notes: r.notes });
+    var next = findRule(r.repl, kind);
+    if (!next || tgt < next.removed) break;
+    r = next;
+  }
+  if (r && !r.repl) return { av: null, since: null, chain: chain };
+  var last = chain[chain.length - 1];
+  return last ? { av: last.av, since: last.since, chain: chain } : { av: null, since: null, chain: chain };
+}
+
+function cleanValue(v) {
+  v = v.trim();
+  if (v.indexOf("{{") !== -1) return { templated: true, value: v };
+  var q = v.charAt(0);
+  if (q === '"' || q === "'") {
+    var end = v.indexOf(q, 1);
+    return { value: end > 0 ? v.slice(1, end) : v.slice(1) };
+  }
+  var hash = v.search(/\s#/);
+  if (hash !== -1) v = v.slice(0, hash);
+  return { value: v.trim() };
+}
+function lineInfo(line) {
+  if (/^\s*(#.*)?$/.test(line)) return null; // blank or comment
+  var m = /^(\s*)((?:-\s+)*)/.exec(line);
+  return { lead: m[1].length, content: m[1].length + m[2].length, dash: m[2].length > 0, text: line.slice(m[1].length + m[2].length) };
+}
+function isDocSep(line) { return /^(---|\.\.\.)(\s|$)/.test(line); }
+
+function parseYaml(text, file) {
+  var lines = text.split(/\r?\n/), out = [];
+  for (var i = 0; i < lines.length; i++) {
+    var m = /^(\s*)((?:-\s+)*)["']?apiVersion["']?\s*:\s*(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    var indent = m[1].length + m[2].length;
+    var av = cleanValue(m[3]);
+    // block bounds
+    var start = i, end = i, j, li;
+    if (!m[2].length) {
+      for (j = i - 1; j >= 0; j--) {
+        if (isDocSep(lines[j])) break;
+        li = lineInfo(lines[j]);
+        if (!li) continue;
+        if (li.content < indent) break;
+        start = j;
+        if (li.content === indent && li.dash) break;
+      }
+    }
+    for (j = i + 1; j < lines.length; j++) {
+      if (isDocSep(lines[j])) break;
+      li = lineInfo(lines[j]);
+      if (!li) continue;
+      if (li.content < indent) break;
+      if (li.dash && li.lead < indent) break;
+      end = j;
+    }
+    var kind = null, name = null, ns = null, kindTemplated = false;
+    for (j = start; j <= end; j++) {
+      li = lineInfo(lines[j]);
+      if (!li || li.content !== indent) continue;
+      var km = /^["']?kind["']?\s*:\s*(.*)$/.exec(li.text);
+      if (km && kind === null) { var kv = cleanValue(km[1]); kind = kv.value; kindTemplated = !!kv.templated; }
+      if (/^["']?metadata["']?\s*:/.test(li.text)) {
+        var childIndent = -1;
+        for (var k = j + 1; k <= end; k++) {
+          var ci = lineInfo(lines[k]);
+          if (!ci) continue;
+          if (ci.content <= indent) break;
+          if (childIndent === -1) childIndent = ci.content;
+          if (ci.content !== childIndent) continue;
+          var nm = /^["']?name["']?\s*:\s*(.*)$/.exec(ci.text);
+          if (nm && name === null) name = cleanValue(nm[1]).value;
+          var nsm = /^["']?namespace["']?\s*:\s*(.*)$/.exec(ci.text);
+          if (nsm && ns === null) ns = cleanValue(nsm[1]).value;
+        }
+      }
+    }
+    if (!kind) continue;
+    var nested = false;
+    if (indent > 0) {
+      nested = true;
+      for (j = start - 1; j >= 0; j--) {
+        if (isDocSep(lines[j])) break;
+        li = lineInfo(lines[j]);
+        if (!li) continue;
+        if (li.content < indent) { if (/^["']?items["']?\s*:/.test(li.text)) nested = false; break; }
+      }
+    }
+    if (kind === "List" && av.value === "v1") continue;
+    out.push({ file: file, line: i + 1, apiVersion: av.value, kind: kind, name: name, namespace: ns, nested: nested, templated: !!av.templated || kindTemplated });
+  }
+  return out;
+}
+function parseJson(text, file) {
+  var out = [], data;
+  try { data = JSON.parse(text); } catch (e) { return null; }
+  (function walk(o) {
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    if (!o || typeof o !== "object") return;
+    if (typeof o.apiVersion === "string" && typeof o.kind === "string") {
+      if (Array.isArray(o.items)) { o.items.forEach(walk); if (/List$/.test(o.kind)) return; }
+      var md = o.metadata || {};
+      out.push({ file: file, line: null, apiVersion: o.apiVersion, kind: o.kind, name: md.name || null, namespace: md.namespace || null, nested: false, templated: false });
+    }
+  })(data);
+  return out;
+}
+function parseSource(text, file) {
+  var t = text.trim();
+  if (!t) return [];
+  if (t.charAt(0) === "{" || t.charAt(0) === "[") { var j = parseJson(t, file); if (j) return j; }
+  return parseYaml(text, file);
+}
+
+function evaluate(resources, cur, tgt) {
+  var findings = [], scanned = 0, templated = 0;
+  resources.forEach(function (r) {
+    if (r.templated) { templated++; return; }
+    var rule = findRule(r.apiVersion, r.kind);
+    var dep = rule ? null : findDeprecation(r.apiVersion, r.kind);
+    if (r.nested && !rule) return; // nested refs only matter when they point at a removed API
+    if (!r.nested) scanned++;
+    if (rule) {
+      var status = cur >= rule.removed ? "broken" : (tgt >= rule.removed ? "blocker" : "warning");
+      var res = resolveReplacement(rule, r.kind, tgt);
+      var direct = res.chain.length <= 1;
+      findings.push({
+        res: r, status: status, removed: rule.removed, repl: res.av, since: res.since,
+        via: direct ? null : res.chain.slice(0, -1).map(function (c) { return c.av; }),
+        steps: res.chain.map(function (c) { var n = findRule(c.av, r.kind); return { av: c.av, since: c.since, until: n ? n.removed - 1 : null }; }),
+        notes: res.chain.length ? res.chain.map(function (c) { return c.notes; }).filter(Boolean).join(" ") : rule.notes,
+        auto: !!rule.repl && direct && !rule.manual && !r.nested,
+        migrateNow: res.since !== null && res.since <= cur
+      });
+    } else if (dep && tgt >= dep.deprecated) {
+      findings.push({ res: r, status: "notice", removed: null, deprecated: dep.deprecated, repl: dep.repl, since: null, via: null, notes: dep.notes, auto: false, migrateNow: true });
+    }
+  });
+  var order = { broken: 0, blocker: 1, warning: 2, notice: 3 };
+  findings.sort(function (a, b) { return order[a.status] - order[b.status] || (a.removed || 99) - (b.removed || 99); });
+  var breaking = findings.filter(function (f) { return f.status === "broken" || f.status === "blocker"; }).length;
+  var flagged = findings.filter(function (f) { return !f.res.nested; }).length;
+  return { findings: findings, scanned: scanned, breaking: breaking, deprecated: findings.length - breaking, ready: Math.max(0, scanned - flagged), templated: templated };
+}
+function hopCounts(findings, cur, tgt) {
+  var hops = [];
+  for (var v = cur; v <= tgt; v++) {
+    hops.push({ v: v, n: findings.filter(function (f) { return f.removed === v && f.status === "blocker"; }).length });
+  }
+  return hops;
+}
+function applyFixes(text, file, findings) {
+  var lines = text.split(/\r?\n/), n = 0;
+  findings.forEach(function (f) {
+    if (!f.auto || f.res.file !== file || !f.res.line) return;
+    var idx = f.res.line - 1;
+    if (lines[idx] && lines[idx].indexOf(f.res.apiVersion) !== -1) { lines[idx] = lines[idx].replace(f.res.apiVersion, f.repl); n++; }
+  });
+  return { text: lines.join("\n"), count: n };
+}
+function label(f) {
+  return f.status === "broken" ? "Already not served on v1." + f.removed + "+" :
+    f.status === "blocker" ? "Breaks at v1." + f.removed :
+    f.status === "warning" ? "Deprecated, removed in v1." + f.removed : "Deprecated since v1." + f.deprecated;
+}
+function advice(f, cur) {
+  if (!f.repl) return "";
+  if (f.status === "notice") return "";
+  if (f.via) return "No single API version spans this upgrade, so migrate in steps: " + f.steps.map(function (s) {
+    return s.av + " (served from v1." + s.since + (s.until ? " to v1." + s.until : "") + ")";
+  }).join(", then ") + ".";
+  if (f.migrateNow) return "The replacement is already served by v1." + cur + ", so you can migrate before upgrading.";
+  return "The replacement first appears in v1." + f.since + ". Upgrade to v1." + f.since + " (no later than v1." + (f.removed - 1) + "), migrate this resource, then continue.";
+}
+function markdownReport(result, cur, tgt) {
+  var md = "# Kubernetes upgrade readiness: v1." + cur + " to v1." + tgt + "\n\n";
+  md += "- Resources scanned: " + result.scanned + "\n- Break on upgrade: " + result.breaking + "\n- Deprecated: " + result.deprecated + "\n- Ready: " + result.ready + "\n";
+  if (result.templated) md += "- Skipped (unrendered template values): " + result.templated + "\n";
+  if (!result.findings.length) return md + "\nNo removed or deprecated API versions found.\n";
+  md += "\n| Status | Resource | Current API | Replace with | Where |\n|---|---|---|---|---|\n";
+  result.findings.forEach(function (f) {
+    var r = f.res;
+    md += "| " + label(f) + " | " + r.kind + (r.name ? "/" + r.name : "") + (r.namespace ? " (" + r.namespace + ")" : "") + (r.nested ? " (nested reference)" : "") +
+      " | `" + r.apiVersion + "` | " + (f.repl ? "`" + f.repl + "`" : "No replacement API") + " | " + r.file + (r.line ? ":" + r.line : "") + " |\n";
+  });
+  md += "\n## Notes\n\n";
+  result.findings.forEach(function (f) {
+    var r = f.res, bits = [f.notes, advice(f, cur)].filter(Boolean).join(" ");
+    md += "- **" + r.kind + (r.name ? "/" + r.name : "") + "**: " + (bits || "Change the apiVersion. No field changes are needed.") + "\n";
+  });
+  return md;
+}
+if (typeof module !== "undefined") module.exports = { parseSource: parseSource, evaluate: evaluate, applyFixes: applyFixes, markdownReport: markdownReport, hopCounts: hopCounts, RULES: RULES };
+</script>
+
+<script>
+/* ---------- Site settings: edit these two lines when you launch ---------- */
+var SITE = {
+  teamCheckoutUrl: "",   // your Stripe Payment Link, e.g. https://buy.stripe.com/abc123
+  repoUrl: ""            // your GitHub repository, e.g. https://github.com/you/shipshape
+};
+
+/* ---------- UI ---------- */
+(function () {
+  if (/^https:\/\//.test(SITE.teamCheckoutUrl)) {
+    var buy = document.getElementById("teamBuy");
+    buy.href = SITE.teamCheckoutUrl; buy.hidden = false;
+    document.getElementById("teamStatus").textContent = "Available now";
+    document.getElementById("planTeam").classList.add("live");
+  }
+  if (/^https:\/\//.test(SITE.repoUrl)) {
+    var repo = document.getElementById("repoLink");
+    repo.href = SITE.repoUrl; repo.parentNode.hidden = false;
+  }
+
+  var EXAMPLE = [
+    "# Example: a web shop last touched on Kubernetes 1.24",
+    "apiVersion: apps/v1",
+    "kind: Deployment",
+    "metadata:",
+    "  name: storefront",
+    "  namespace: shop",
+    "spec:",
+    "  replicas: 3",
+    "  selector:",
+    "    matchLabels: {app: storefront}",
+    "  template:",
+    "    metadata:",
+    "      labels: {app: storefront}",
+    "    spec:",
+    "      containers:",
+    "        - name: web",
+    "          image: registry.example.com/storefront:4.2.1",
+    "---",
+    "apiVersion: autoscaling/v2beta2",
+    "kind: HorizontalPodAutoscaler",
+    "metadata:",
+    "  name: storefront",
+    "  namespace: shop",
+    "spec:",
+    "  scaleTargetRef:",
+    "    apiVersion: apps/v1",
+    "    kind: Deployment",
+    "    name: storefront",
+    "  minReplicas: 3",
+    "  maxReplicas: 12",
+    "---",
+    "apiVersion: batch/v1beta1",
+    "kind: CronJob",
+    "metadata:",
+    "  name: nightly-invoices",
+    "  namespace: shop",
+    "spec:",
+    "  schedule: \"15 2 * * *\"",
+    "  jobTemplate:",
+    "    spec:",
+    "      template:",
+    "        spec:",
+    "          restartPolicy: OnFailure",
+    "          containers:",
+    "            - name: invoices",
+    "              image: registry.example.com/invoices:1.9.0",
+    "---",
+    "apiVersion: policy/v1beta1",
+    "kind: PodDisruptionBudget",
+    "metadata:",
+    "  name: storefront",
+    "  namespace: shop",
+    "spec:",
+    "  minAvailable: 2",
+    "  selector:",
+    "    matchLabels: {app: storefront}",
+    "---",
+    "apiVersion: flowcontrol.apiserver.k8s.io/v1beta2",
+    "kind: FlowSchema",
+    "metadata:",
+    "  name: shop-controllers",
+    "spec:",
+    "  priorityLevelConfiguration:",
+    "    name: workload-high",
+    "---",
+    "apiVersion: networking.k8s.io/v1",
+    "kind: Ingress",
+    "metadata:",
+    "  name: storefront",
+    "  namespace: shop",
+    "spec:",
+    "  rules:",
+    "    - host: shop.example.com",
+    "---",
+    "apiVersion: v1",
+    "kind: Endpoints",
+    "metadata:",
+    "  name: legacy-payments",
+    "  namespace: shop",
+    "subsets:",
+    "  - addresses: [{ip: 10.20.0.14}]",
+    "    ports: [{port: 8443}]",
+    ""
+  ].join("\n");
+
+  var $ = function (id) { return document.getElementById(id); };
+  var src = $("src"), cur = $("cur"), tgt = $("tgt");
+  var files = [], isExample = true, last = null, fixText = "";
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+
+  for (var v = 16; v <= MAX_VER; v++) {
+    cur.add(new Option("v1." + v, v));
+    tgt.add(new Option("v1." + v, v));
+  }
+  cur.value = store("ss-cur") || 24;
+  tgt.value = store("ss-tgt") || 33;
+  src.value = EXAMPLE;
+
+  function sources() {
+    var list = [];
+    if (src.value.trim()) list.push({ name: "pasted.yaml", text: src.value });
+    return list.concat(files);
+  }
+
+  function run() {
+    var c = +cur.value, t = +tgt.value;
+    store("ss-cur", c); store("ss-tgt", t);
+    var resources = [];
+    sources().forEach(function (s) { resources = resources.concat(parseSource(s.text, s.name)); });
+    var result = evaluate(resources, c, t);
+    last = { result: result, cur: c, tgt: t };
+    $("exTag").style.display = isExample ? "" : "none";
+    render(result, c, t);
+  }
+
+  function render(res, c, t) {
+    $("tAll").textContent = res.scanned;
+    $("tBad").textContent = res.breaking;
+    $("tWarn").textContent = res.deprecated;
+    $("tGood").textContent = res.ready;
+
+    var vd = $("verdict"), cls, head, sub;
+    var broken = res.findings.filter(function (f) { return f.status === "broken"; }).length;
+    if (t <= c) { cls = "idle"; head = "Pick a target newer than v1." + c; sub = "The target release has to be later than the one your cluster runs."; }
+    else if (!res.scanned && !res.findings.length) { cls = "idle"; head = "Nothing to check yet"; sub = res.templated ? "Found " + res.templated + " resource(s) with unrendered template values. Run helm template and paste the output." : "Paste manifests above or add files. Each resource needs an apiVersion and a kind."; }
+    else if (res.breaking) { cls = "bad"; head = "Not ready for v1." + t; sub = res.breaking + " of " + res.scanned + " resources use an API that v1." + t + " no longer serves." + (broken ? " " + broken + " of them already fail on v1." + c + "." : "") + " Fix these before you upgrade."; }
+    else if (res.deprecated) { cls = "warn"; head = "Ready for v1." + t + ", with deprecations"; sub = "Nothing breaks on this upgrade. " + res.deprecated + " resource(s) use a deprecated API you should plan to move off."; }
+    else { cls = "good"; head = "Ready for v1." + t; sub = "All " + res.scanned + " resources use API versions that v1." + t + " still serves."; }
+    if (res.templated && cls !== "idle") sub += " Skipped " + res.templated + " resource(s) with unrendered template values.";
+    vd.className = "verdict " + cls;
+    vd.innerHTML = "<h2>" + esc(head) + "</h2><p>" + esc(sub) + "</p>";
+
+    var path = $("path");
+    if (t <= c) path.innerHTML = '<div class="empty">No upgrade path to show.</div>';
+    else path.innerHTML = hopCounts(res.findings, c, t).map(function (h) {
+      var k = "hop" + (h.v === c ? " cur" : "") + (h.n ? " hit" : "") + (h.v === t ? " tgt" : "");
+      var n = h.v === c ? "now" : (h.n ? h.n + " break" + (h.n === 1 ? "s" : "") : "clear");
+      return '<div class="' + k + '"><span class="v">1.' + h.v + '</span><span class="n">' + n + "</span></div>";
+    }).join("");
+
+    var box = $("findings");
+    if (!res.findings.length) {
+      box.innerHTML = '<div class="empty">' + (res.scanned ? "No removed or deprecated API versions found." : "Findings appear here once there are manifests to scan.") + "</div>";
+    } else {
+      box.innerHTML = res.findings.map(function (f) {
+        var r = f.res;
+        var where = esc(r.file) + (r.line ? ":" + r.line : "") + (r.namespace ? " · namespace " + esc(r.namespace) : "") + (r.nested ? " · nested reference" : "");
+        var swap = "<del>" + esc(r.apiVersion) + "</del> → " + (f.repl ? "<ins>" + esc(f.repl) + "</ins>" : "<span>no replacement API</span>") + (f.via ? ' <span class="muted">(skipping ' + esc(f.via.join(", ")) + ", also removed)</span>" : "");
+        var tags = '<span class="pill ' + f.status + '">' + esc(label(f)) + "</span>";
+        if (f.status !== "notice") tags += f.auto ? '<span class="pill auto">Safe auto-fix</span>' : '<span class="pill manual">Needs manual changes</span>';
+        var body = [f.notes || (f.auto ? "Only the apiVersion changes. No field changes are needed." : ""), advice(f, c)].filter(Boolean).join(" ");
+        return '<article class="finding ' + f.status + '"><div class="fhead"><span class="name">' + esc(r.kind) + (r.name ? " / " + esc(r.name) : "") + "</span>" + tags + "</div>" +
+          '<div class="swap">' + swap + "</div>" + (body ? "<p>" + esc(body) + "</p>" : "") + '<div class="where">' + where + "</div></article>";
+      }).join("");
+    }
+
+    var autos = res.findings.filter(function (f) { return f.auto; }).length;
+    $("btnFix").disabled = !autos;
+    $("btnReport").disabled = !res.scanned && !res.findings.length;
+    if (!autos) { $("fixWrap").classList.remove("show"); }
+    else if ($("fixWrap").classList.contains("show")) buildFix();
+  }
+
+  function buildFix() {
+    if (!last) return;
+    var total = 0, parts = [], list = sources();
+    list.forEach(function (s) {
+      var fx = applyFixes(s.text, s.name, last.result.findings);
+      total += fx.count;
+      parts.push((list.length > 1 ? "# ----- " + s.name + " -----\n" : "") + fx.text);
+    });
+    fixText = parts.join("\n");
+    $("fixOut").value = fixText;
+    var manual = last.result.findings.filter(function (f) { return !f.auto && f.status !== "notice"; }).length;
+    $("fixNote").textContent = total + " apiVersion line(s) updated." + (manual ? " " + manual + " finding(s) need field changes and were left untouched." : "");
+  }
+
+  function toast(msg, bad) {
+    var el = $("toast"); el.textContent = msg; el.style.color = bad ? "var(--bad)" : "";
+    clearTimeout(toast.t); toast.t = setTimeout(function () { el.textContent = ""; }, 4000);
+  }
+  function copy(text, okMsg, fallbackEl) {
+    var fail = function () { toast("Copy was blocked by the browser. Select the text and copy it manually.", true); if (fallbackEl) { fallbackEl.focus(); fallbackEl.select(); } };
+    try { navigator.clipboard.writeText(text).then(function () { toast(okMsg); }, fail); } catch (e) { fail(); }
+  }
+  function renderChips() {
+    $("chips").innerHTML = files.map(function (f, i) {
+      return '<span class="chip">' + esc(f.name) + '<button type="button" data-i="' + i + '" aria-label="Remove ' + esc(f.name) + '">×</button></span>';
+    }).join("");
+  }
+  function addFiles(list) {
+    var pending = list.length;
+    if (!pending) return;
+    if (isExample) { src.value = ""; isExample = false; }
+    Array.prototype.forEach.call(list, function (file) {
+      var fr = new FileReader();
+      fr.onload = function () { files.push({ name: file.name, text: String(fr.result) }); done(); };
+      fr.onerror = function () { toast("Could not read " + file.name + ".", true); done(); };
+      fr.readAsText(file);
+    });
+    function done() { if (--pending === 0) { renderChips(); run(); } }
+  }
+
+  var timer;
+  src.addEventListener("input", function () { isExample = false; clearTimeout(timer); timer = setTimeout(run, 250); });
+  cur.addEventListener("change", run);
+  tgt.addEventListener("change", run);
+  $("files").addEventListener("change", function (e) { addFiles(e.target.files); e.target.value = ""; });
+  $("chips").addEventListener("click", function (e) {
+    var i = e.target.getAttribute && e.target.getAttribute("data-i");
+    if (i !== null && i !== undefined) { files.splice(+i, 1); renderChips(); run(); }
+  });
+  $("btnExample").addEventListener("click", function () { src.value = EXAMPLE; files = []; isExample = true; renderChips(); run(); });
+  $("btnClear").addEventListener("click", function () { src.value = ""; files = []; isExample = false; renderChips(); run(); src.focus(); });
+  $("btnReport").addEventListener("click", function () { if (last) copy(markdownReport(last.result, last.cur, last.tgt), "Report copied as Markdown. Paste it into a pull request or ticket."); });
+  $("btnFix").addEventListener("click", function () { $("fixWrap").classList.add("show"); buildFix(); $("fixWrap").scrollIntoView({ block: "nearest" }); });
+  $("btnCopyFix").addEventListener("click", function () { copy(fixText, "Fixed manifests copied.", $("fixOut")); });
+
+  var drop = $("drop");
+  ["dragenter", "dragover"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); }); });
+  ["dragleave", "drop"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); }); });
+  drop.addEventListener("drop", function (e) { if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+
+  run();
+})();
+</script>
+</body>
+</html>
