@@ -26,11 +26,11 @@ import (
 // the public key here or set it at build time:
 //
 //	go build -ldflags "-X github.com/20041540MichaelKelly/shipshape/internal/license.PublicKey=<key>"
-var PublicKey = ""
+var PublicKey = "SRz0fe6VzaQIFa6h3xOcABEgRT/LHvNp/MAR6S/dlsI="
 
 // DefaultServer is the licence server the CLI talks to when SHIPSHAPE_SERVER
 // is not set, for example https://api.example.com. Set it like PublicKey.
-var DefaultServer = ""
+var DefaultServer = "https://api.shipshapek8s.com"
 
 // Claims is the signed content of a licence.
 type Claims struct {
