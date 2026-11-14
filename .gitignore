@@ -1,0 +1,7 @@
+/shipshape
+/shipshape-server
+accounts.json
+*.tmp
+.env
+*.pem
+keys.txt
